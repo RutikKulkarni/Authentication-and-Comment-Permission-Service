@@ -4,9 +4,13 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const User = require("../models/User");
 const Session = require("../models/Session");
+const Permission = require("../models/Permission");
 
 router.post("/signup", async (req, res) => {
   const { name, email, password } = req.body;
+  if (!name || !email || !password) {
+    return res.status(400).json({ message: "All fields are required" });
+  }
   try {
     let user = await User.findOne({ email });
     if (user) return res.status(400).json({ message: "User already exists" });
@@ -18,14 +22,23 @@ router.post("/signup", async (req, res) => {
     });
     await user.save();
 
-    res.status(201).json({ message: "User created" });
+    const defaultPermissions = new Permission({
+      user: user._id,
+      permissions: ["read"],
+    });
+    await defaultPermissions.save();
+    res.status(201).json({ message: "User created successfully" });
   } catch (error) {
+    console.error("Signup error:", error);
     res.status(500).json({ message: "Server error" });
   }
 });
 
 router.post("/login", async (req, res) => {
   const { email, password } = req.body;
+  if (!email || !password) {
+    return res.status(400).json({ message: "Email and password are required" });
+  }
   try {
     const user = await User.findOne({ email });
     if (!user) return res.status(400).json({ message: "Invalid credentials" });
@@ -43,20 +56,33 @@ router.post("/login", async (req, res) => {
       { expiresIn: "7d" }
     );
 
+    await Session.deleteMany({ user: user._id });
     await Session.create({
       user: user._id,
       refreshToken,
       expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
     });
 
-    res.json({ accessToken, refreshToken });
+    res.json({
+      accessToken,
+      refreshToken,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+      },
+    });
   } catch (error) {
+    console.error("Login error:", error);
     res.status(500).json({ message: "Server error" });
   }
 });
 
 router.post("/refresh-token", async (req, res) => {
   const { refreshToken } = req.body;
+  if (!refreshToken) {
+    return res.status(400).json({ message: "Refresh token is required" });
+  }
   try {
     const session = await Session.findOne({ refreshToken });
     if (!session || session.expiresAt < new Date()) {
@@ -72,12 +98,16 @@ router.post("/refresh-token", async (req, res) => {
 
     res.json({ accessToken });
   } catch (error) {
+    console.error("Refresh token error:", error);
     res.status(401).json({ message: "Invalid refresh token" });
   }
 });
 
 router.post("/forgot-password", async (req, res) => {
   const { email } = req.body;
+  if (!email) {
+    return res.status(400).json({ message: "Email is required" });
+  }
   try {
     const user = await User.findOne({ email });
     if (!user) return res.status(400).json({ message: "User not found" });
@@ -91,12 +121,18 @@ router.post("/forgot-password", async (req, res) => {
 
     res.json({ message: "Reset token generated", resetToken });
   } catch (error) {
+    console.error("Forgot password error:", error);
     res.status(500).json({ message: "Server error" });
   }
 });
 
 router.post("/reset-password", async (req, res) => {
   const { resetToken, newPassword } = req.body;
+  if (!resetToken || !newPassword) {
+    return res
+      .status(400)
+      .json({ message: "Reset token and new password are required" });
+  }
   try {
     const decoded = jwt.verify(resetToken, process.env.JWT_SECRET);
     const user = await User.findOne({
@@ -116,6 +152,7 @@ router.post("/reset-password", async (req, res) => {
 
     res.json({ message: "Password reset successful" });
   } catch (error) {
+    console.error("Reset password error:", error);
     res.status(500).json({ message: "Server error" });
   }
 });
@@ -126,6 +163,7 @@ router.post("/logout", async (req, res) => {
     await Session.deleteOne({ refreshToken });
     res.json({ message: "Logged out successfully" });
   } catch (error) {
+    console.error("Logout error:", error);
     res.status(500).json({ message: "Server error" });
   }
 });
